@@ -39,14 +39,81 @@ import {
 } from "lucide-react";
 
 /**
- * 移动端待办事项管理应用 (v11.7 - 右侧交互重构版)
- * - 修复：列表卡片右侧布局改为“重叠式”
- * - 交互：默认显示截止日期 -> 触摸/悬停显示删除按钮
- * - 视觉：移除上下排布的拥挤感
+ * 移动端待办事项管理应用 (v11.11 - 回滚版)
+ * - 回滚：移除杂志风 Logo，恢复简洁标题
+ * - 保留：进度条范围点击切换 (4字中文)
+ * - 保留：长按拖拽排序
  */
 
-// --- 莫兰迪高级色板 ---
+// --- 样式注入 (Polyfill for Tailwind Plugins & Custom Animations) ---
+const GlobalStyles = () => (
+  <style>{`
+    /* 隐藏滚动条但保留功能 */
+    .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+    }
+    .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+    
+    /* 背景 Blob 动画 */
+    @keyframes blob {
+      0% { transform: translate(0px, 0px) scale(1); }
+      33% { transform: translate(30px, -50px) scale(1.1); }
+      66% { transform: translate(-20px, 20px) scale(0.9); }
+      100% { transform: translate(0px, 0px) scale(1); }
+    }
+    .animate-blob {
+      animation: blob 7s infinite;
+    }
+    .animation-delay-2000 {
+      animation-delay: 2s;
+    }
+    .animation-delay-4000 {
+      animation-delay: 4s;
+    }
+
+    /* tailwindcss-animate Polyfill */
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes slideInFromBottom { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    @keyframes slideInFromTop { from { transform: translateY(-100%); } to { transform: translateY(0); } }
+    @keyframes zoomIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    @keyframes slideInFromRightSmall { from { transform: translateX(2rem); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes slideInFromLeftSmall { from { transform: translateX(-2rem); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    .animate-in { animation-duration: 0.4s; animation-fill-mode: forwards; animation-timing-function: ease-out; }
+    .fade-in { animation-name: fadeIn; }
+    .slide-in-from-bottom-2 { animation-name: slideInFromBottom; }
+    .slide-in-from-bottom-5 { animation-name: slideInFromBottom; }
+    .slide-in-from-top-10 { animation-name: slideInFromTop; }
+    .slide-in-from-right-8 { animation-name: slideInFromRightSmall; }
+    .slide-in-from-left-8 { animation-name: slideInFromLeftSmall; }
+    .zoom-in-95 { animation-name: zoomIn; }
+    
+    .glass-panel {
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    /* 拖拽相关样式 */
+    .dragging-card {
+      opacity: 0.3;
+      filter: grayscale(100%);
+      transform: scale(0.95);
+    }
+    .drag-prevent-scroll {
+      touch-action: none; 
+      user-select: none;
+      -webkit-user-select: none;
+    }
+  `}</style>
+);
+
+// --- 莫兰迪高级色板 (扩充至 16 色) ---
 const MORANDI_THEMES = [
+  // 原有 8 色
   { color: "#6B8E88", name: "青瓷 (Celadon)" },
   { color: "#9C8CB9", name: "雾紫 (Dusty Purple)" },
   { color: "#C98C93", name: "胭脂 (Rouge)" },
@@ -55,20 +122,40 @@ const MORANDI_THEMES = [
   { color: "#B59078", name: "褐土 (Clay)" },
   { color: "#95A5A6", name: "冷灰 (Concrete)" },
   { color: "#D4A5D9", name: "丁香 (Lilac)" },
+  // 新增 8 色
+  { color: "#889EAF", name: "钢蓝 (Steel)" },
+  { color: "#A49393", name: "可可 (Cocoa)" },
+  { color: "#92A8D1", name: "静谧 (Serenity)" },
+  { color: "#D7B19D", name: "杏仁 (Almond)" },
+  { color: "#95B3A5", name: "海沫 (Seafoam)" },
+  { color: "#B098A4", name: "浆果 (Berry)" },
+  { color: "#869D9D", name: "灰绿 (Teal)" },
+  { color: "#CBBBA0", name: "麦色 (Wheat)" },
 ];
 
 const MORANDI_YELLOW = "#E6D5A7";
 const ITEMS_PER_PAGE = 7;
-
-// 特殊筛选ID
 const NO_TAG_ID = "__no_tag__";
 
-// 默认预设标签
 const FIXED_TAGS = [
   { id: "urgent", label: "⚡ 紧急", color: "#9C8CB9" },
   { id: "important", label: "⭐ 重要", color: "#6B8E88" },
   { id: "forgettable", label: "🧠 易忘", color: "#E6D5A7" },
 ];
+
+const PROGRESS_RANGES = [
+  { id: "all", label: "全部时间" },
+  { id: "month", label: "近一个月" },
+  { id: "week", label: "最近一周" },
+  { id: "3days", label: "最近三天" },
+];
+
+const generateId = () => {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+};
 
 // --- 透明全屏遮罩组件 ---
 const Backdrop = ({ onClick, zIndex = "z-40" }) => (
@@ -87,7 +174,13 @@ export default function App() {
     if (typeof window !== "undefined") {
       try {
         const saved = localStorage.getItem("todoList");
-        return saved ? JSON.parse(saved) : [];
+        const parsed = saved ? JSON.parse(saved) : [];
+        // 数据迁移：确保所有任务都有 customOrder
+        return parsed.map((t, i) => ({
+          ...t,
+          customOrder:
+            t.customOrder !== undefined ? t.customOrder : Date.now() - i * 1000,
+        }));
       } catch (e) {
         return [];
       }
@@ -131,7 +224,9 @@ export default function App() {
   const [calendarViewType, setCalendarViewType] = useState("created");
 
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [statsRange, setStatsRange] = useState(7);
+  const [statsRange, setStatsRange] = useState(7); // 图表统计范围
+  const [progressBarRange, setProgressBarRange] = useState("all"); // 进度条统计范围
+
   const [currentPage, setCurrentPage] = useState(1);
   const [slideDirection, setSlideDirection] = useState("next");
   const [expandedGroups, setExpandedGroups] = useState({
@@ -149,6 +244,12 @@ export default function App() {
   const [showUndoToast, setShowUndoToast] = useState(false);
   const undoTimeoutRef = useRef(null);
 
+  // 拖拽排序相关状态
+  const [draggedTaskId, setDraggedTaskId] = useState(null);
+  const dragLongPressTimer = useRef(null);
+  const listContainerRef = useRef(null);
+  const scrollingLocked = useRef(false);
+
   const [themeIndex, setThemeIndex] = useState(() => {
     if (typeof window !== "undefined") {
       const savedColor = localStorage.getItem("themeColor");
@@ -160,14 +261,6 @@ export default function App() {
 
   const theme = MORANDI_THEMES[themeIndex];
   const themeColor = theme.color;
-
-  // 优先级颜色常量
-  const PRIORITY_COLORS = {
-    URGENT_IMPORTANT: "#C98C93",
-    IMPORTANT: "#6B8E88",
-    URGENT: "#9C8CB9",
-    FORGETTABLE: MORANDI_YELLOW,
-  };
 
   const [showThemePicker, setShowThemePicker] = useState(false);
   const timelineRef = useRef(null);
@@ -264,6 +357,85 @@ export default function App() {
     return [...new Set(tags)];
   };
 
+  // --- 优先级计算 ---
+  const getPriorityScore = (task) => {
+    const tags = task.tags || [];
+    if (tags.includes("urgent") && tags.includes("important")) return 3;
+    if (tags.includes("important")) return 2;
+    if (tags.includes("urgent")) return 1;
+    return 0;
+  };
+
+  // --- 拖拽排序逻辑 ---
+  const handlePointerDown = (e, taskId) => {
+    if (viewMode !== "list" || filterType === "completed") return;
+    if (e.target.tagName === "BUTTON" || e.target.closest("button")) return;
+
+    dragLongPressTimer.current = setTimeout(() => {
+      setDraggedTaskId(taskId);
+      scrollingLocked.current = true;
+      if (navigator.vibrate) navigator.vibrate(50);
+    }, 200);
+  };
+
+  const handlePointerMove = (e) => {
+    if (!draggedTaskId) {
+      if (dragLongPressTimer.current) {
+        clearTimeout(dragLongPressTimer.current);
+        dragLongPressTimer.current = null;
+      }
+      return;
+    }
+    e.preventDefault();
+    const element = document.elementFromPoint(e.clientX, e.clientY);
+    const targetTaskItem = element?.closest("[data-task-id]");
+
+    if (targetTaskItem) {
+      const targetId = targetTaskItem.getAttribute("data-task-id");
+      if (targetId && targetId !== draggedTaskId) {
+        reorderTasks(draggedTaskId, targetId);
+      }
+    }
+  };
+
+  const handlePointerUp = () => {
+    if (dragLongPressTimer.current) {
+      clearTimeout(dragLongPressTimer.current);
+    }
+    setDraggedTaskId(null);
+    scrollingLocked.current = false;
+  };
+
+  const reorderTasks = (sourceId, targetId) => {
+    setTasks((prevTasks) => {
+      const sourceIndex = prevTasks.findIndex((t) => t.id === sourceId);
+      const targetIndex = prevTasks.findIndex((t) => t.id === targetId);
+
+      if (sourceIndex === -1 || targetIndex === -1) return prevTasks;
+
+      const sourceTask = prevTasks[sourceIndex];
+      const targetTask = prevTasks[targetIndex];
+
+      const sourceScore = getPriorityScore(sourceTask);
+      const targetScore = getPriorityScore(targetTask);
+
+      if (sourceScore !== targetScore) return prevTasks;
+
+      const newTasks = [...prevTasks];
+      const tempOrder = newTasks[sourceIndex].customOrder;
+      newTasks[sourceIndex] = {
+        ...newTasks[sourceIndex],
+        customOrder: newTasks[targetIndex].customOrder,
+      };
+      newTasks[targetIndex] = {
+        ...newTasks[targetIndex],
+        customOrder: tempOrder,
+      };
+
+      return newTasks;
+    });
+  };
+
   // --- 核心逻辑 ---
   const handleCreateTask = () => {
     if (!inputText.trim()) return;
@@ -272,13 +444,17 @@ export default function App() {
     let finalTags = [...newTaskTags];
     finalTags = applyAutoTags(finalTags, newTaskDueDate);
 
+    const maxOrder =
+      tasks.length > 0 ? Math.max(...tasks.map((t) => t.customOrder || 0)) : 0;
+    const baseOrder = maxOrder + 1000;
+
     if (addMode === "batch") {
       const lines = inputText
         .split("\n")
         .map((line) => line.trim())
         .filter((line) => line.length > 0);
-      newTasksData = lines.map((line) => ({
-        id: crypto.randomUUID(),
+      newTasksData = lines.map((line, idx) => ({
+        id: generateId(),
         text: line,
         completed: false,
         createdAt: new Date().toISOString(),
@@ -286,11 +462,12 @@ export default function App() {
         dueDate: newTaskDueDate || null,
         subtasks: [],
         tags: [...finalTags],
+        customOrder: baseOrder + idx,
       }));
     } else {
       newTasksData = [
         {
-          id: crypto.randomUUID(),
+          id: generateId(),
           text: inputText.trim(),
           completed: false,
           createdAt: new Date().toISOString(),
@@ -298,6 +475,7 @@ export default function App() {
           dueDate: newTaskDueDate || null,
           subtasks: newTaskSubtasks,
           tags: finalTags,
+          customOrder: baseOrder,
         },
       ];
     }
@@ -317,7 +495,7 @@ export default function App() {
     setNewTaskSubtasks([
       ...newTaskSubtasks,
       {
-        id: crypto.randomUUID(),
+        id: generateId(),
         text: newSubtaskInput.trim(),
         completed: false,
       },
@@ -413,7 +591,7 @@ export default function App() {
         if (task.id === taskId) {
           const newSubtasks = [
             ...(task.subtasks || []),
-            { id: crypto.randomUUID(), text: text, completed: false },
+            { id: generateId(), text: text, completed: false },
           ];
           const updatedTask = { ...task, subtasks: newSubtasks };
           if (selectedTask && selectedTask.id === taskId)
@@ -485,14 +663,6 @@ export default function App() {
       setShowUndoToast(false);
       if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
     }
-  };
-
-  const getPriorityScore = (task) => {
-    const tags = task.tags || [];
-    if (tags.includes("urgent") && tags.includes("important")) return 3;
-    if (tags.includes("important")) return 2;
-    if (tags.includes("urgent")) return 1;
-    return 0;
   };
 
   const toggleFilter = (tag) => {
@@ -581,13 +751,12 @@ export default function App() {
       const scoreB = getPriorityScore(b);
 
       if (scoreA !== scoreB) return scoreB - scoreA;
-      if (a.dueDate && b.dueDate) {
-        return new Date(a.dueDate) - new Date(b.dueDate);
-      }
-      if (a.dueDate) return -1;
-      if (b.dueDate) return 1;
 
-      return new Date(b.createdAt) - new Date(a.createdAt);
+      // 优先级相同时，完全依赖 customOrder 排序 (降序，新/顶置的在前)
+      // 使用 || 0 防止旧数据为 undefined
+      const orderA = a.customOrder || 0;
+      const orderB = b.customOrder || 0;
+      return orderB - orderA;
     });
     return result;
   }, [tasks, filterType, searchQuery, activeTagFilters]);
@@ -603,17 +772,23 @@ export default function App() {
     return baseFilteredTasks.slice(start, start + ITEMS_PER_PAGE);
   }, [baseFilteredTasks, currentPage, filterType]);
 
-  // 滑动翻页
+  // 滑动翻页 (Pointer Event 混合处理)
   const touchStart = useRef(null);
   const touchEnd = useRef(null);
   const onTouchStart = (e) => {
+    // 仅当未拖拽时响应翻页
+    if (scrollingLocked.current) return;
     touchEnd.current = null;
-    touchStart.current = e.targetTouches[0].clientX;
+    touchStart.current = e.targetTouches
+      ? e.targetTouches[0].clientX
+      : e.clientX;
   };
   const onTouchMove = (e) => {
-    touchEnd.current = e.targetTouches[0].clientX;
+    if (scrollingLocked.current) return;
+    touchEnd.current = e.targetTouches ? e.targetTouches[0].clientX : e.clientX;
   };
   const onTouchEnd = () => {
+    if (scrollingLocked.current) return;
     if (!touchStart.current || !touchEnd.current) return;
     const distance = touchStart.current - touchEnd.current;
     if (distance > 50 && currentPage < totalPages) {
@@ -630,12 +805,39 @@ export default function App() {
     setExpandedGroups((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }));
   };
 
+  // 点击切换范围逻辑
+  const handleToggleRange = () => {
+    const currentIndex = PROGRESS_RANGES.findIndex(
+      (r) => r.id === progressBarRange
+    );
+    const nextIndex = (currentIndex + 1) % PROGRESS_RANGES.length;
+    setProgressBarRange(PROGRESS_RANGES[nextIndex].id);
+  };
+
   const stats = useMemo(() => {
-    const total = tasks.length;
-    const completed = tasks.filter((t) => t.completed).length;
+    const now = new Date();
+    const oneDay = 24 * 60 * 60 * 1000;
+
+    let filteredTasks = tasks;
+
+    if (progressBarRange !== "all") {
+      filteredTasks = tasks.filter((t) => {
+        const created = new Date(t.createdAt);
+        const diffTime = Math.abs(now - created);
+        const diffDays = Math.ceil(diffTime / oneDay);
+
+        if (progressBarRange === "month") return diffDays <= 30;
+        if (progressBarRange === "week") return diffDays <= 7;
+        if (progressBarRange === "3days") return diffDays <= 3;
+        return true;
+      });
+    }
+
+    const total = filteredTasks.length;
+    const completed = filteredTasks.filter((t) => t.completed).length;
     const rate = total === 0 ? 0 : Math.round((completed / total) * 100);
     return { total, completed, rate };
-  }, [tasks]);
+  }, [tasks, progressBarRange]);
 
   const chartData = useMemo(() => {
     const rawData = [];
@@ -815,7 +1017,8 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-[#f8f9fa] text-gray-800 font-sans selection:bg-gray-200">
+    <div className="min-h-[100dvh] bg-[#f8f9fa] text-gray-800 font-sans selection:bg-gray-200 drag-prevent-scroll">
+      <GlobalStyles />
       {/* ... Background ... */}
       <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
         <div
@@ -824,7 +1027,7 @@ export default function App() {
         ></div>
         <div
           className="absolute top-[10%] -right-[20%] w-[70%] h-[70%] rounded-full mix-blend-multiply filter blur-[100px] opacity-20 animate-blob animation-delay-2000"
-          style={{ backgroundColor: "#E6D5A7" }}
+          style={{ backgroundColor: themeColor }}
         ></div>
         <div
           className="absolute -bottom-[20%] left-[20%] w-[80%] h-[80%] rounded-full mix-blend-multiply filter blur-[100px] opacity-20 animate-blob animation-delay-4000"
@@ -847,45 +1050,48 @@ export default function App() {
         <header className="p-6 pb-2 sticky top-0 z-20 bg-white/60 backdrop-blur-xl border-b border-white/40 pt-[calc(1.5rem+env(safe-area-inset-top))]">
           <div className="flex justify-between items-center mb-6">
             <div className="flex flex-col">
-              <span
-                className="text-[10px] font-bold uppercase tracking-[0.4em] mb-1 opacity-60"
-                style={{ color: themeColor }}
-              >
-                My Workspace
-              </span>
-              <h1 className="text-3xl font-serif font-black tracking-tight text-gray-800">
-                Todo List
-              </h1>
+              <img
+                src="/logo.png"
+                alt="Logo"
+                className="h-12 w-auto ml-2 mt-2"
+              />
             </div>
 
-            <div className="flex gap-1 items-center bg-white/50 p-1 rounded-full border border-white/50 shadow-sm backdrop-blur-md">
+            <div className="flex gap-2 items-center">
               <NavIcon
                 onClick={() => setViewMode("stats")}
                 active={viewMode === "stats"}
                 icon={LineChart}
                 themeColor={themeColor}
               />
+
               <NavIcon
-                onClick={() =>
-                  setViewMode(viewMode === "timeline" ? "list" : "timeline")
-                }
-                active={viewMode === "list" || viewMode === "timeline"}
-                icon={viewMode === "timeline" ? LayoutList : CalendarDays}
+                onClick={() => setViewMode("list")}
+                active={viewMode === "list"}
+                icon={LayoutList}
                 themeColor={themeColor}
               />
+
+              <NavIcon
+                onClick={() => setViewMode("timeline")}
+                active={viewMode === "timeline"}
+                icon={CalendarDays}
+                themeColor={themeColor}
+              />
+
               <NavIcon
                 onClick={() => setViewMode("log")}
                 active={viewMode === "log"}
                 icon={FileText}
                 themeColor={themeColor}
               />
-              <div className="w-px h-4 bg-gray-300 mx-1"></div>
+
               <button
                 onClick={() => setShowThemePicker(!showThemePicker)}
-                className="p-2 rounded-full transition-all hover:bg-white relative z-50"
+                className="p-2.5 rounded-full transition-all hover:bg-white/50 hover:shadow-sm active:scale-95 relative z-50 ml-1"
               >
                 <div
-                  className="w-5 h-5 rounded-full border-2 border-white shadow-sm"
+                  className="w-5 h-5 rounded-full border-2 border-white shadow-sm ring-1 ring-black/5"
                   style={{ backgroundColor: themeColor }}
                 ></div>
               </button>
@@ -928,33 +1134,49 @@ export default function App() {
             )}
           </div>
 
-          {/* Progress Bar */}
+          {/* Progress Bar & Range Toggle */}
           {viewMode !== "log" && viewMode !== "stats" && (
-            <div className="mb-6 relative h-8 w-full bg-white/60 rounded-2xl overflow-hidden shadow-sm border border-white/60">
-              <div
-                className="h-full transition-all duration-1000 cubic-bezier(0.4, 0, 0.2, 1) flex items-center justify-end pr-3 relative"
-                style={{
-                  width: `${Math.max(stats.rate, 8)}%`,
-                  backgroundColor: themeColor,
-                }}
-              >
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent to-white/20"></div>
-              </div>
-              <div className="absolute inset-0 flex justify-between items-center px-4 text-xs font-bold pointer-events-none">
-                <span
-                  className={`drop-shadow-sm transition-colors duration-300 ${
-                    stats.rate > 12 ? "text-white" : "text-gray-500"
-                  }`}
+            <div className="mb-6 flex gap-2 items-center">
+              <div className="relative h-8 flex-1 bg-white/60 rounded-2xl overflow-hidden shadow-sm border border-white/60">
+                <div
+                  className="h-full transition-all duration-1000 cubic-bezier(0.4, 0, 0.2, 1) flex items-center justify-end pr-3 relative"
+                  style={{
+                    width: `${Math.max(stats.rate, 8)}%`,
+                    backgroundColor: themeColor,
+                  }}
                 >
-                  {stats.rate}% 完成
-                </span>
-                <div className="flex gap-1 items-center text-gray-400 font-medium">
-                  <span style={{ color: themeColor }} className="text-sm">
-                    {stats.completed}
-                  </span>
-                  <span className="text-[10px] opacity-50">/</span>
-                  <span>{stats.total}</span>
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent to-white/20"></div>
                 </div>
+                <div className="absolute inset-0 flex justify-between items-center px-4 text-xs font-bold pointer-events-none">
+                  <span
+                    className={`drop-shadow-sm transition-colors duration-300 ${
+                      stats.rate > 12 ? "text-white" : "text-gray-500"
+                    }`}
+                  >
+                    {stats.rate}% 完成
+                  </span>
+                  <div className="flex gap-1 items-center text-gray-400 font-medium">
+                    <span style={{ color: themeColor }} className="text-sm">
+                      {stats.completed}
+                    </span>
+                    <span className="text-[10px] opacity-50">/</span>
+                    <span>{stats.total}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Range Toggle Button (Click to cycle) */}
+              <div className="relative">
+                <button
+                  onClick={handleToggleRange}
+                  // 修改：去掉 padding px-3 改为 px-4，增加 justify-center, 移除图标和 gap
+                  className="h-8 px-4 rounded-2xl bg-white/60 border border-white/60 text-xs font-bold text-gray-500 flex items-center justify-center hover:bg-white transition-colors shadow-sm whitespace-nowrap active:scale-95"
+                >
+                  {
+                    PROGRESS_RANGES.find((r) => r.id === progressBarRange)
+                      ?.label
+                  }
+                </button>
               </div>
             </div>
           )}
@@ -1132,13 +1354,17 @@ export default function App() {
         {/* Main Content */}
         <main
           className="flex-1 flex flex-col overflow-hidden relative"
+          ref={listContainerRef}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
           onTouchStart={viewMode === "list" ? onTouchStart : undefined}
           onTouchMove={viewMode === "list" ? onTouchMove : undefined}
           onTouchEnd={viewMode === "list" ? onTouchEnd : undefined}
         >
           {/* A. List View */}
           {viewMode === "list" && (
-            <div className="flex-1 overflow-y-auto p-6 flex flex-col justify-between pb-24 scroll-smooth snap-y snap-mandatory overscroll-contain relative z-0">
+            <div className="flex-1 overflow-y-auto p-6 flex flex-col justify-between pb-24 scroll-smooth snap-y snap-mandatory overscroll-contain relative z-0 scrollbar-hide">
               <div className="space-y-3.5 snap-start">
                 {(filterType !== "completed" &&
                   currentViewTasks.length === 0 &&
@@ -1191,7 +1417,7 @@ export default function App() {
                     ) : (
                       <div
                         key={currentPage}
-                        className={`space-y-3.5 animate-in fade-in duration-500 ease-out fill-mode-forwards ${
+                        className={`space-y-3.5 animate-in fade-in ease-out fill-mode-forwards ${
                           slideDirection === "next"
                             ? "slide-in-from-right-8"
                             : "slide-in-from-left-8"
@@ -1205,6 +1431,8 @@ export default function App() {
                             deleteTask={deleteTask}
                             themeColor={themeColor}
                             onShowDetail={setSelectedTask}
+                            isDragging={task.id === draggedTaskId}
+                            onPointerDown={handlePointerDown}
                           />
                         ))}
                       </div>
@@ -1267,7 +1495,7 @@ export default function App() {
 
               <div
                 ref={timelineRef}
-                className="flex-1 overflow-x-auto flex snap-x snap-mandatory"
+                className="flex-1 overflow-x-auto flex snap-x snap-mandatory scrollbar-hide"
               >
                 {daysInMonth.map((date) => {
                   const dateStr = date.toLocaleDateString("zh-CN");
@@ -1299,8 +1527,7 @@ export default function App() {
                           }
                         </div>
                       </div>
-                      {/* Modified: Background Color Tasks - Pure Block Style - Font Size Increased */}
-                      <div className="flex-1 overflow-y-auto pb-24 no-scrollbar p-1">
+                      <div className="flex-1 overflow-y-auto pb-24 no-scrollbar p-1 scrollbar-hide">
                         {dayTasks.map((task) => {
                           const styles = getCalendarTaskStyle(task);
                           return (
@@ -1334,7 +1561,7 @@ export default function App() {
 
           {/* C. Log View */}
           {viewMode === "log" && (
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
               <div className="bg-white/70 backdrop-blur-xl rounded-3xl shadow-lg border border-white/60 p-8 relative min-h-[60vh]">
                 <div className="flex justify-between items-center mb-6 border-b border-gray-200/50 pb-4">
                   <h2 className="font-serif font-bold text-xl text-gray-700">
@@ -1362,7 +1589,7 @@ export default function App() {
 
           {/* D. Stats View */}
           {viewMode === "stats" && (
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
               <div className="bg-white/70 backdrop-blur-xl rounded-3xl shadow-lg border border-white/60 p-6 relative min-h-[60vh]">
                 <h2 className="font-serif font-bold text-xl text-gray-700 mb-6">
                   数据趋势
@@ -1593,22 +1820,25 @@ export default function App() {
         {isAddModalOpen && (
           <div className="absolute inset-0 z-[60] flex flex-col justify-start pt-[4vh] bg-gray-900/20 backdrop-blur-sm p-6 animate-in fade-in duration-300">
             <div className="bg-white/95 backdrop-blur-2xl w-full max-w-sm mx-auto rounded-[2rem] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.15)] overflow-hidden animate-in slide-in-from-top-10 duration-500 border border-white/60 ring-1 ring-white/50 flex flex-col max-h-[85vh]">
-              <div className="p-4 border-b border-gray-100/50 flex justify-between items-center shrink-0">
-                <div className="flex items-center gap-3">
-                  {/* Mode Toggle */}
+              {/* Header */}
+              <div className="p-5 border-b border-gray-100/50 flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-4">
+                  {/* Mode Toggle - 增大字体 */}
                   <button
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => setAddMode("single")}
-                    className={`text-sm font-bold transition-colors ${
-                      addMode === "single" ? "text-gray-800" : "text-gray-400"
+                    className={`text-lg font-black transition-colors ${
+                      addMode === "single" ? "text-gray-800" : "text-gray-300"
                     }`}
                   >
                     单条
                   </button>
-                  <div className="w-px h-3 bg-gray-300"></div>
+                  <div className="w-0.5 h-4 bg-gray-200 rounded-full"></div>
                   <button
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => setAddMode("batch")}
-                    className={`text-sm font-bold transition-colors ${
-                      addMode === "batch" ? "text-gray-800" : "text-gray-400"
+                    className={`text-lg font-black transition-colors ${
+                      addMode === "batch" ? "text-gray-800" : "text-gray-300"
                     }`}
                   >
                     批量
@@ -1618,15 +1848,16 @@ export default function App() {
                   onClick={() => setIsAddModalOpen(false)}
                   className="p-2 rounded-full hover:bg-gray-100/80 text-gray-400 transition-colors"
                 >
-                  <X className="w-5 h-5" />
+                  <X className="w-6 h-6" />
                 </button>
               </div>
 
-              <div className="p-6 flex-1 overflow-y-auto">
-                {/* 标签选择区域 (固定行 + 自定义行) */}
-                <div className="mb-4 space-y-2">
-                  {/* 行1: 固定3个 (移除搁置) */}
-                  <div className="flex gap-1.5">
+              {/* Scrollable Content Area - 缩窄间距: 改 p-5 为 px-5 pt-2 pb-5 */}
+              <div className="px-5 pt-2 pb-5 flex-1 overflow-y-auto scrollbar-hide min-h-0">
+                {/* 标签选择区域 (增大字体) */}
+                <div className="mb-3 space-y-2">
+                  {/* 行1: 固定3个 */}
+                  <div className="flex gap-2">
                     {FIXED_TAGS.map((tag) => (
                       <TagBtn
                         key={tag.id}
@@ -1640,43 +1871,54 @@ export default function App() {
                         light={tag.id === "urgent"}
                         dark={tag.id === "important"}
                         customText={tag.id === "forgettable" ? "#78350F" : null}
-                        compact
-                        className="flex-1 justify-center"
+                        // 字体从 text-sm 增大到 text-base
+                        className="flex-1 justify-center text-base py-3"
                       />
                     ))}
                   </div>
                   {/* 行2: 自定义标签 */}
-                  <div className="flex gap-1.5 flex-wrap">
+                  <div className="flex gap-2 flex-wrap">
                     {customTagsList.map((tag) => (
-                      <TagBtn
-                        key={tag}
-                        label={tag}
-                        color={themeColor}
-                        active={newTaskTags.includes(tag)}
-                        onClick={() => toggleNewTaskTag(tag)}
-                        light
-                        compact
-                      />
+                      <div key={tag} className="relative group">
+                        <TagBtn
+                          label={tag}
+                          color={themeColor}
+                          active={newTaskTags.includes(tag)}
+                          onClick={() => toggleNewTaskTag(tag)}
+                          light
+                          className="text-base py-2 px-4"
+                        />
+                        <button
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteCustomTag(tag);
+                          }}
+                          className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
 
-                {/* 批量模式下也显示日期选择 (通用) */}
-                <div className="flex items-center gap-2 p-2 bg-gray-50 rounded-xl border border-gray-100 mb-4">
-                  <Calendar className="w-4 h-4 text-gray-400 ml-2" />
+                {/* 批量模式下也显示日期选择 (通用) - 缩窄间距 */}
+                <div className="flex items-center gap-2 p-2.5 bg-gray-50 rounded-xl border border-gray-100 mb-3">
+                  <Calendar className="w-4 h-4 text-gray-400 ml-1" />
                   <input
                     type="date"
                     value={newTaskDueDate}
                     onChange={(e) => setNewTaskDueDate(e.target.value)}
-                    className="bg-transparent text-xs font-medium text-gray-600 outline-none flex-1"
+                    className="bg-transparent text-sm font-medium text-gray-600 outline-none flex-1"
                   />
-                  {/* New: Clear Date Button for Add Modal */}
                   {newTaskDueDate && (
                     <button
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => setNewTaskDueDate("")}
                       className="p-1 rounded-full hover:bg-gray-200 text-gray-400"
                     >
-                      <X className="w-3 h-3" />
+                      <X className="w-4 h-4" />
                     </button>
                   )}
                 </div>
@@ -1690,39 +1932,40 @@ export default function App() {
                       ? "批量模式: 每行一个任务..."
                       : "输入任务内容..."
                   }
-                  className="w-full h-32 p-4 rounded-2xl bg-gray-50/50 border border-gray-200/50 focus:bg-white focus:ring-2 focus:border-transparent outline-none resize-none text-gray-800 leading-relaxed transition-all placeholder-gray-400 mb-4"
+                  className="w-full h-28 p-4 rounded-2xl bg-gray-50/50 border border-gray-200/50 focus:bg-white focus:ring-2 focus:border-transparent outline-none resize-none text-gray-800 leading-relaxed transition-all placeholder-gray-400 mb-3 text-base"
                   style={{ "--tw-ring-color": themeColor }}
                 />
 
                 {/* 子任务输入 (仅单条模式) */}
                 {addMode === "single" && (
-                  <div className="mb-4">
+                  <div className="mb-2">
                     <div className="flex gap-2 mb-2">
                       <input
                         type="text"
                         value={newSubtaskInput}
                         onChange={(e) => setNewSubtaskInput(e.target.value)}
                         placeholder="添加子任务..."
-                        className="flex-1 px-3 py-2 text-xs rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white outline-none"
+                        className="flex-1 px-4 py-2.5 text-sm rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white outline-none"
                         onKeyDown={(e) =>
                           e.key === "Enter" && handleAddSubtask()
                         }
                       />
                       <button
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={handleAddSubtask}
-                        className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200"
+                        className="p-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-colors"
                       >
-                        <Plus className="w-4 h-4 text-gray-500" />
+                        <Plus className="w-5 h-5 text-gray-500" />
                       </button>
                     </div>
                     {newTaskSubtasks.length > 0 && (
-                      <div className="space-y-1 max-h-20 overflow-y-auto">
+                      <div className="space-y-1 max-h-20 overflow-y-auto scrollbar-hide">
                         {newTaskSubtasks.map((st) => (
                           <div
                             key={st.id}
-                            className="flex items-center gap-2 text-xs text-gray-600 pl-2"
+                            className="flex items-center gap-2 text-sm text-gray-600 pl-2 py-1"
                           >
-                            <div className="w-1 h-1 rounded-full bg-gray-300"></div>
+                            <div className="w-1.5 h-1.5 rounded-full bg-gray-300"></div>
                             {st.text}
                           </div>
                         ))}
@@ -1730,8 +1973,11 @@ export default function App() {
                     )}
                   </div>
                 )}
+              </div>
 
-                <div className="mt-auto flex gap-4">
+              {/* Fixed Footer - 独立于滚动区域，防止键盘遮挡 */}
+              <div className="p-4 border-t border-gray-100/50 shrink-0 bg-white/50 backdrop-blur-sm">
+                <div className="flex gap-4">
                   <button
                     onClick={() => setIsAddModalOpen(false)}
                     className="flex-1 py-3.5 rounded-2xl text-sm font-bold text-gray-500 bg-gray-100/80 hover:bg-gray-200/80 transition-colors"
@@ -1764,7 +2010,8 @@ export default function App() {
                 isDetailEditing ? "justify-start pt-[4vh]" : "justify-center"
               } items-center p-6 animate-in fade-in pointer-events-none`}
             >
-              <div className="bg-white/95 backdrop-blur-2xl w-full max-w-sm rounded-[2rem] shadow-[0_30px_80px_-20px_rgba(0,0,0,0.2)] overflow-hidden animate-in zoom-in-95 duration-300 relative border border-white/60 ring-1 ring-white/50 pointer-events-auto flex flex-col max-h-[85vh]">
+              {/* 修改点1：max-h-[85vh] 改为 max-h-[60vh]，缩小高度占用 */}
+              <div className="bg-white/95 backdrop-blur-2xl w-full max-w-sm rounded-[2rem] shadow-[0_30px_80px_-20px_rgba(0,0,0,0.2)] overflow-hidden animate-in zoom-in-95 duration-300 relative border border-white/60 ring-1 ring-white/50 pointer-events-auto flex flex-col max-h-[60vh]">
                 <div className="p-4 border-b border-gray-100/50 flex justify-between items-center shrink-0">
                   <div className="flex items-center gap-3">
                     <div className="p-2 rounded-xl bg-gray-100/50 text-gray-500">
@@ -1784,8 +2031,9 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="p-6 overflow-y-auto">
-                  {/* 标签管理 (与 Add Modal 保持一致布局) */}
+                {/* 修改点2：p-5 改为 px-5 pt-2 pb-5，大幅减少顶部空白 */}
+                <div className="px-5 pt-2 pb-5 overflow-y-auto scrollbar-hide">
+                  {/* 标签管理 */}
                   <div className="mb-4 space-y-2">
                     <div className="flex gap-1.5">
                       {FIXED_TAGS.map((tag) => (
@@ -1810,8 +2058,8 @@ export default function App() {
                           customText={
                             tag.id === "forgettable" ? "#78350F" : null
                           }
-                          compact
-                          className="flex-1 justify-center"
+                          // 字体从 text-sm 增大到 text-base
+                          className="flex-1 justify-center text-base py-3"
                         />
                       ))}
                     </div>
@@ -1831,9 +2079,11 @@ export default function App() {
                               )
                             }
                             light
-                            compact
+                            // 字体从 text-sm 增大到 text-base
+                            className="text-base py-2 px-4"
                           />
                           <button
+                            onMouseDown={(e) => e.preventDefault()}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDeleteCustomTag(tag);
@@ -1859,7 +2109,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* 日期设置区 (Modified: Clear button inside) */}
+                  {/* 日期设置区 */}
                   <div className="mb-4 bg-gray-50 p-2.5 rounded-xl border border-gray-100 flex items-center gap-3">
                     <Calendar className="w-4 h-4 text-gray-400" />
                     <input
@@ -1872,6 +2122,7 @@ export default function App() {
                     />
                     {selectedTask.dueDate && (
                       <button
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={() => updateTaskDueDate(selectedTask.id, null)}
                         className="p-1 rounded-full hover:bg-gray-200 text-gray-400 transition-colors"
                         title="清除日期"
@@ -1887,7 +2138,10 @@ export default function App() {
                     // Removed onBlur to fix jumping/closing issue
                     onChange={(e) => {
                       const newText = e.target.value;
-                      setSelectedTask((prev) => ({ ...prev, text: newText }));
+                      setSelectedTask((prev) => ({
+                        ...prev,
+                        text: newText,
+                      }));
                       setTasks((prevTasks) =>
                         prevTasks.map((t) =>
                           t.id === selectedTask.id ? { ...t, text: newText } : t
@@ -1907,6 +2161,7 @@ export default function App() {
                           className="flex items-center gap-2 group"
                         >
                           <button
+                            onMouseDown={(e) => e.preventDefault()}
                             onClick={() =>
                               updateSubtask(selectedTask.id, st.id)
                             }
@@ -1930,6 +2185,7 @@ export default function App() {
                             {st.text}
                           </span>
                           <button
+                            onMouseDown={(e) => e.preventDefault()}
                             onClick={() =>
                               deleteSubtask(selectedTask.id, st.id)
                             }
@@ -1956,11 +2212,28 @@ export default function App() {
                     />
                   </div>
 
-                  <div className="mt-4 pt-4 border-t border-gray-100/80 text-[10px] text-gray-400 flex justify-between">
+                  <div className="mt-4 pt-4 border-t border-gray-100/80 text-[10px] text-gray-400 flex justify-between items-center">
                     <span>
                       创建:{" "}
                       {new Date(selectedTask.createdAt).toLocaleDateString()}
                     </span>
+                    <div className="flex gap-2">
+                      <button
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => setSelectedTask(null)}
+                        className="px-4 py-2 rounded-lg bg-gray-100 text-gray-500 font-bold text-base hover:bg-gray-200 transition-colors"
+                      >
+                        取消
+                      </button>
+                      <button
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => setSelectedTask(null)}
+                        className="px-4 py-2 rounded-lg text-white font-bold text-base shadow-sm transition-all active:scale-95"
+                        style={{ backgroundColor: themeColor }}
+                      >
+                        确认
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1986,7 +2259,6 @@ export default function App() {
 }
 
 // --- Sub Components ---
-// ... (NavIcon, FilterOption code remains same) ...
 
 const NavIcon = ({ onClick, active, icon: Icon, themeColor }) => (
   <button
@@ -2032,6 +2304,7 @@ const TagBtn = ({
   className,
 }) => (
   <button
+    onMouseDown={(e) => e.preventDefault()} // 防止抢占焦点导致软键盘收起
     onClick={onClick}
     className={`${
       compact ? "px-3 py-2 text-[10px]" : "px-5 py-2.5 text-xs"
@@ -2054,7 +2327,15 @@ const TagBtn = ({
   </button>
 );
 
-function TaskItem({ task, toggleTask, deleteTask, themeColor, onShowDetail }) {
+function TaskItem({
+  task,
+  toggleTask,
+  deleteTask,
+  themeColor,
+  onShowDetail,
+  isDragging,
+  onPointerDown,
+}) {
   const dateObj = new Date(task.createdAt);
   const dateWatermark = `${dateObj.getMonth() + 1}.${dateObj.getDate()}`;
   const isLongText = task.text.length > 30;
@@ -2139,9 +2420,11 @@ function TaskItem({ task, toggleTask, deleteTask, themeColor, onShowDetail }) {
 
   return (
     <div
-      className={`group relative bg-white/80 backdrop-blur-md rounded-[1.2rem] px-5 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] border border-white/60 transition-all duration-300 hover:shadow-[0_8px_30px_-6px_rgba(0,0,0,0.06)] hover:-translate-y-1 overflow-hidden h-[60px] flex items-center ${
+      data-task-id={task.id}
+      onPointerDown={(e) => onPointerDown && onPointerDown(e, task.id)}
+      className={`group relative bg-white/80 backdrop-blur-md rounded-[1.2rem] px-5 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] border border-white/60 transition-all duration-300 hover:shadow-[0_8px_30px_-6px_rgba(0,0,0,0.06)] hover:-translate-y-1 overflow-hidden h-[60px] flex items-center select-none ${
         task.completed ? "opacity-50 grayscale-[0.8]" : ""
-      }`}
+      } ${isDragging ? "dragging-card z-50" : ""}`}
     >
       {styleConfig && !task.completed && (
         <div
